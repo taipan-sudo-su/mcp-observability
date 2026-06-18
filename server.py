@@ -9,12 +9,12 @@ import sys
 import time
 from urllib.parse import quote
 
+import httpx
 from dotenv import load_dotenv
+from kubernetes import client as _k8s_client, config as _k8s_config
+from mcp.server.fastmcp import FastMCP
 
 load_dotenv()
-
-import httpx
-from mcp.server.fastmcp import FastMCP
 
 # ---------------------------------------------------------------------------
 # Config from environment 
@@ -153,8 +153,6 @@ def _log_access(user: str, tool: str | None, path: str, status: int) -> None:
 # ---------------------------------------------------------------------------
 # Kubernetes client (in-cluster, falls back to kubeconfig for local dev)
 # ---------------------------------------------------------------------------
-from kubernetes import client as _k8s_client, config as _k8s_config
-
 try:
     _k8s_config.load_incluster_config()
 except _k8s_config.ConfigException:

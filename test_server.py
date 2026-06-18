@@ -1,6 +1,4 @@
 """Unit tests for server.py — covers the new multi-user auth and logging logic."""
-import asyncio
-import hmac
 import json
 import os
 import sys
@@ -40,8 +38,7 @@ sys.modules.setdefault("kubernetes.config", _k8s_stub.config)
 # ---------------------------------------------------------------------------
 os.environ.setdefault("MCP_API_KEYS", "alice:key-abc,bob:key-xyz")
 
-import importlib
-import server as srv
+import server as srv  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +107,6 @@ class TestParseSince(unittest.TestCase):
     def test_ns_hour(self):
         before = int(time.time() * 1e9)
         result = srv._parse_since_to_ns("1h")
-        after = int(time.time() * 1e9)
         expected_delta = int(3600e9)
         self.assertAlmostEqual(before - result, expected_delta, delta=int(1e9))
 
@@ -608,7 +604,6 @@ class TestResourceRightsizing(unittest.IsolatedAsyncioTestCase):
         async def fake_get(url, **kwargs):
             r = MagicMock()
             q = kwargs["params"]["query"]
-            key = next((k for k in prom_data if k in q.replace("_", "")), None)
             # map query string to key
             if "avg_over_time(rate" in q:
                 val = prom_data["cpu_avg"]
