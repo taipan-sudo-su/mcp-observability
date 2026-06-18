@@ -1,0 +1,17 @@
+apiVersion: v2
+name: mcp-observability
+description: MCP server exposing Prometheus, Loki, Tempo, AlertManager, Grafana, and Kubernetes as AI tools
+type: application
+version: 0.1.0
+appVersion: "latest"
+keywords:
+  - mcp
+  - observability
+  - prometheus
+  - loki
+  - kubernetes
+home: https://github.com/tavinasht/mcp-observability
+sources:
+  - https://github.com/tavinasht/mcp-observability
+maintainers:
+  - name: tavinasht

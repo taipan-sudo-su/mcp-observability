@@ -1,0 +1,74 @@
+version: "3.9"
+
+# Local dev stack — runs the MCP server plus minimal backend stubs.
+# No Kubernetes cluster required; K8s tools will error gracefully.
+#
+#   docker compose up
+#   curl http://localhost:8000/health
+#   curl http://localhost:8000/metrics
+
+services:
+  mcp:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      MCP_API_KEYS: "alice:key-abc,bob:key-xyz"
+      MCP_ROLES: "alice:admin,bob:readonly"
+      MCP_RATE_LIMIT: "0"
+      PROMETHEUS_URL: "http://prometheus:9090"
+      LOKI_URL: "http://loki:3100"
+      TEMPO_URL: "http://tempo:3200"
+      ALERTMANAGER_URL: "http://alertmanager:9093"
+      GRAFANA_URL: "http://grafana:3000"
+      GRAFANA_TOKEN: ""
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+      - alertmanager
+      - grafana
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./dev/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=1d"
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:3.0.0
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    restart: unless-stopped
+
+  tempo:
+    image: grafana/tempo:2.5.0
+    ports:
+      - "3200:3200"
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./dev/tempo.yaml:/etc/tempo.yaml:ro
+    restart: unless-stopped
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    ports:
+      - "9093:9093"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.0.0
+    ports:
+      - "3000:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+      GF_SECURITY_ADMIN_PASSWORD: "admin"
+    restart: unless-stopped

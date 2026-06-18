@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mcp-observability.fullname" . }}
+  labels:
+    {{- include "mcp-observability.labels" . | nindent 4 }}
+  {{- with .Values.podAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mcp-observability.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mcp-observability.selectorLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "mcp-observability.serviceAccountName" . }}
+      containers:
+        - name: mcp-observability
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            - name: PROMETHEUS_URL
+              value: {{ .Values.backends.prometheusUrl | quote }}
+            - name: LOKI_URL
+              value: {{ .Values.backends.lokiUrl | quote }}
+            - name: TEMPO_URL
+              value: {{ .Values.backends.tempoUrl | quote }}
+            - name: ALERTMANAGER_URL
+              value: {{ .Values.backends.alertmanagerUrl | quote }}
+            - name: GRAFANA_URL
+              value: {{ .Values.backends.grafanaUrl | quote }}
+            {{- if .Values.auth.roles }}
+            - name: MCP_ROLES
+              value: {{ .Values.auth.roles | quote }}
+            {{- end }}
+            {{- if .Values.auth.rateLimitRpm }}
+            - name: MCP_RATE_LIMIT
+              value: {{ .Values.auth.rateLimitRpm | quote }}
+            {{- end }}
+            {{- if .Values.auth.apiKeys }}
+            - name: MCP_API_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-observability.fullname" . }}-auth
+                  key: MCP_API_KEYS
+            {{- end }}
+            {{- if .Values.backends.grafanaToken }}
+            - name: GRAFANA_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-observability.fullname" . }}-auth
+                  key: GRAFANA_TOKEN
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

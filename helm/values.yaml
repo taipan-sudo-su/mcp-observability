@@ -1,0 +1,67 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/tavinasht/mcp-observability
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8000
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: mcp-observability.example.com
+  tls: []
+
+# API keys for authentication.
+# Keys are stored in a Kubernetes Secret; never put real keys in values.yaml.
+# Override at deploy time:
+#   helm upgrade ... --set auth.apiKeys="alice:key-abc,bob:key-xyz"
+auth:
+  apiKeys: ""
+  # RBAC roles: alice:admin,bob:readonly
+  roles: ""
+  # Rate limit in requests/minute per user (0 = unlimited)
+  rateLimitRpm: 0
+
+# Backend URLs — defaults point to in-cluster kube-prometheus-stack / Grafana / Loki / Tempo
+backends:
+  prometheusUrl: "http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090"
+  lokiUrl: "http://loki.monitoring.svc.cluster.local:3100"
+  tempoUrl: "http://tempo.monitoring.svc.cluster.local:3200"
+  alertmanagerUrl: "http://kube-prometheus-stack-alertmanager.monitoring.svc.cluster.local:9093"
+  grafanaUrl: "http://grafana.monitoring.svc.cluster.local:3000"
+  grafanaToken: ""
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# RBAC rules granted to the service account for K8s tools
+rbac:
+  create: true
+
+podAnnotations: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Prometheus scraping — if you use the Prometheus Operator
+serviceMonitor:
+  enabled: false
+  namespace: ""
+  interval: 30s
+  labels: {}
