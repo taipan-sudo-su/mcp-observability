@@ -41,6 +41,12 @@ GRAFANA_URL = os.getenv(
 )
 GRAFANA_TOKEN = os.getenv("GRAFANA_TOKEN", "")
 
+MCP_SERVER_NAME = os.getenv("MCP_SERVER_NAME", "blockmaze-observability")
+MCP_HOST = os.getenv("MCP_HOST", "0.0.0.0")
+MCP_PORT = int(os.getenv("MCP_PORT", "8000"))
+LOG_LEVEL = os.getenv("LOG_LEVEL", "info")
+HTTP_TIMEOUT = float(os.getenv("HTTP_TIMEOUT", "30"))
+
 # ---------------------------------------------------------------------------
 # API key → username map
 #
@@ -82,7 +88,7 @@ _ROLE_PATTERNS: dict[str, re.Pattern] = {
         r"loki_query_logs|loki_list_labels|loki_list_label_values|loki_get_log_patterns|"
         r"tempo_search_traces|tempo_get_trace|tempo_list_tags|tempo_list_tag_values|"
         r"alertmanager_get_alerts|alertmanager_get_silences|"
-        r"grafana_list_annotations|"
+
         r"k8s_get_pods|k8s_get_deployments|k8s_get_events|k8s_describe_pod|"
         r"k8s_get_pod_logs|k8s_get_nodes|k8s_resource_rightsizing|incident_summary)$"
     ),
@@ -137,7 +143,7 @@ async def _check_rate_limit(username: str) -> bool:
 # ---------------------------------------------------------------------------
 # Structured access logging  (JSON → stdout → Loki)
 # ---------------------------------------------------------------------------
-logging.basicConfig(stream=sys.stdout, level=logging.INFO, format="%(message)s")
+logging.basicConfig(stream=sys.stdout, level=LOG_LEVEL.upper(), format="%(message)s")
 _log = logging.getLogger("mcp.access")
 
 
@@ -156,13 +162,16 @@ def _log_access(user: str, tool: str | None, path: str, status: int) -> None:
 try:
     _k8s_config.load_incluster_config()
 except _k8s_config.ConfigException:
-    _k8s_config.load_kube_config()
+    try:
+        _k8s_config.load_kube_config()
+    except _k8s_config.ConfigException:
+        print("WARNING: No Kubernetes config found — K8s tools will be unavailable", flush=True)
 
 _k8s_v1 = _k8s_client.CoreV1Api()
 _k8s_apps = _k8s_client.AppsV1Api()
 
 # Shared HTTP client — connection pool reused across all tool calls
-_http = httpx.AsyncClient(timeout=30.0)
+_http = httpx.AsyncClient(timeout=HTTP_TIMEOUT)
 
 
 async def _get(url: str, **kwargs) -> httpx.Response:
@@ -210,7 +219,7 @@ def _parse_since_to_s(since: str) -> int:
 # ---------------------------------------------------------------------------
 # MCP server
 # ---------------------------------------------------------------------------
-mcp = FastMCP("blockmaze-observability", stateless_http=True, host="0.0.0.0")
+mcp = FastMCP(MCP_SERVER_NAME, stateless_http=True, host=MCP_HOST)
 
 
 # ── Prometheus ──────────────────────────────────────────────────────────────
@@ -526,91 +535,6 @@ async def alertmanager_get_silences() -> list:
     r = await _get(f"{ALERTMANAGER_URL}/api/v2/silences")
     return r.json()
 
-
-# ── Grafana ──────────────────────────────────────────────────────────────────
-
-def _grafana_headers() -> dict:
-    headers = {"Content-Type": "application/json"}
-    if GRAFANA_TOKEN:
-        headers["Authorization"] = f"Bearer {GRAFANA_TOKEN}"
-    return headers
-
-
-@mcp.tool()
-async def grafana_list_annotations(
-    since: str = "1h",
-    tags: str = "",
-    limit: int = 50,
-) -> list:
-    """List Grafana annotations — useful for correlating deployments or incidents with metric spikes.
-
-    Args:
-        since: lookback window, e.g. '1h', '6h', '1d' (default '1h')
-        tags: comma-separated tag filters, e.g. 'deploy,production'
-        limit: max results (default 50)
-    """
-    from_ms = int(_parse_since_to_s(since) * 1000)
-    params: dict = {"from": from_ms, "limit": limit}
-    if tags:
-        params["tags"] = [t.strip() for t in tags.split(",")]
-
-    try:
-        r = await _http.get(
-            f"{GRAFANA_URL}/api/annotations",
-            params=params,
-            headers=_grafana_headers(),
-            timeout=15.0,
-        )
-    except httpx.TimeoutException:
-        raise RuntimeError("Timeout reaching Grafana")
-    except httpx.ConnectError:
-        raise RuntimeError("Cannot connect to Grafana — is GRAFANA_URL set correctly?")
-
-    if r.status_code >= 400:
-        raise RuntimeError(f"Grafana returned {r.status_code}: {r.text[:200]}")
-    return r.json()
-
-
-@mcp.tool()
-async def grafana_create_annotation(
-    text: str,
-    tags: str = "",
-    dashboard_uid: str = "",
-    panel_id: int = 0,
-) -> dict:
-    """Create a Grafana annotation to mark an event on dashboards (e.g. deploy, incident start).
-
-    Args:
-        text: annotation message, e.g. 'Deployed evm-api v1.4.2'
-        tags: comma-separated tags, e.g. 'deploy,production,evm-api'
-        dashboard_uid: optional — pin annotation to a specific dashboard UID
-        panel_id: optional — pin annotation to a specific panel within the dashboard
-    """
-    payload: dict = {
-        "text": text,
-        "time": int(time.time() * 1000),
-        "tags": [t.strip() for t in tags.split(",") if t.strip()],
-    }
-    if dashboard_uid:
-        payload["dashboardUID"] = dashboard_uid
-    if panel_id:
-        payload["panelId"] = panel_id
-
-    try:
-        r = await _http.post(
-            f"{GRAFANA_URL}/api/annotations",
-            json=payload,
-            headers=_grafana_headers(),
-            timeout=15.0,
-        )
-    except httpx.TimeoutException:
-        raise RuntimeError("Timeout reaching Grafana")
-    except httpx.ConnectError:
-        raise RuntimeError("Cannot connect to Grafana — is GRAFANA_URL set correctly?")
-
-    if r.status_code >= 400:
-        raise RuntimeError(f"Grafana returned {r.status_code}: {r.text[:200]}")
-    return r.json()
 
 
 # ── Kubernetes ───────────────────────────────────────────────────────────────
@@ -1135,10 +1059,9 @@ async def incident_summary(
         prometheus_query(
             f'sum(rate(http_requests_total{{service="{service}",status=~"5.."}}[5m]))'
         ),
-        grafana_list_annotations(since=since, tags=f"deploy,{service}"),
         return_exceptions=True,
     )
-    alerts_r, logs_r, traces_r, events_r, err_rate_r, annotations_r = gather_results
+    alerts_r, logs_r, traces_r, events_r, err_rate_r = gather_results
 
     def _safe(r, default):
         return default if isinstance(r, Exception) else r
@@ -1148,7 +1071,6 @@ async def incident_summary(
     trace_data    = _safe(traces_r, {})
     k8s_events    = _safe(events_r, [])
     err_rate_data = _safe(err_rate_r, {})
-    annotations   = _safe(annotations_r, [])
 
     # Extract log lines
     log_lines = [
@@ -1201,7 +1123,6 @@ async def incident_summary(
         "recent_errors":       log_lines[:10],
         "traces":              trace_list[:5],
         "k8s_events":          svc_events[:10],
-        "recent_deployments":  annotations[:5],
     }
 
 
@@ -1209,7 +1130,7 @@ async def incident_summary(
 # ASGI middleware — handles /health inline, enforces API key, passes
 # lifespan events straight through so MCP's task group initialises correctly
 # ---------------------------------------------------------------------------
-_HEALTH_BODY = b'{"status":"ok","service":"blockmaze-mcp-observability"}'
+_HEALTH_BODY = json.dumps({"status": "ok", "service": MCP_SERVER_NAME}).encode()
 _HEALTH_HEADERS = [
     (b"content-type", b"application/json"),
     (b"content-length", str(len(_HEALTH_BODY)).encode()),
@@ -1259,7 +1180,7 @@ async def _buffer_body(receive):
             m = messages[pos[0]]
             pos[0] += 1
             return m
-        return {"type": "http.disconnect"}
+        return await receive()
 
     return body, _replay
 
@@ -1373,7 +1294,7 @@ if __name__ == "__main__":
 
     uvicorn.run(
         "server:app",
-        host="0.0.0.0",
-        port=8000,
-        log_level="info",
+        host=MCP_HOST,
+        port=MCP_PORT,
+        log_level=LOG_LEVEL,
     )

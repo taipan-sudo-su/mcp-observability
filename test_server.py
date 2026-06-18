@@ -239,9 +239,11 @@ class TestCheckReady(unittest.IsolatedAsyncioTestCase):
 
         call_count = [0]
 
+        prometheus_ready_url = f"{srv.PROMETHEUS_URL}/-/ready"
+
         async def fake_get(url, timeout):
             call_count[0] += 1
-            if "prometheus" in url:
+            if url == prometheus_ready_url:
                 raise _httpx.ConnectError("refused")
             mock_resp = MagicMock()
             mock_resp.status_code = 200
@@ -418,99 +420,6 @@ class TestLokiGetLogPatterns(unittest.IsolatedAsyncioTestCase):
 # ---------------------------------------------------------------------------
 # grafana_list_annotations / grafana_create_annotation
 # ---------------------------------------------------------------------------
-class TestGrafanaAnnotations(unittest.IsolatedAsyncioTestCase):
-    async def test_list_annotations_passes_from_param(self):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = [{"id": 1, "text": "deploy"}]
-        captured = {}
-
-        async def fake_get(url, params, headers, timeout):
-            captured["params"] = params
-            return mock_resp
-
-        with patch.object(srv._http, "get", side_effect=fake_get):
-            result = await srv.grafana_list_annotations(since="1h")
-
-        self.assertIn("from", captured["params"])
-        expected_from = int(time.time() - 3600) * 1000
-        self.assertAlmostEqual(captured["params"]["from"], expected_from, delta=5000)
-        self.assertEqual(result[0]["text"], "deploy")
-
-    async def test_list_annotations_with_tags(self):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = []
-        captured = {}
-
-        async def fake_get(url, params, headers, timeout):
-            captured["params"] = params
-            return mock_resp
-
-        with patch.object(srv._http, "get", side_effect=fake_get):
-            await srv.grafana_list_annotations(tags="deploy,prod")
-
-        self.assertEqual(captured["params"]["tags"], ["deploy", "prod"])
-
-    async def test_create_annotation_sends_correct_payload(self):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"id": 42, "message": "Annotation added"}
-        captured = {}
-
-        async def fake_post(url, json, headers, timeout):
-            captured["payload"] = json
-            return mock_resp
-
-        with patch.object(srv._http, "post", side_effect=fake_post):
-            result = await srv.grafana_create_annotation(
-                text="Deployed evm-api v1.4.2",
-                tags="deploy,production",
-            )
-
-        self.assertEqual(result["id"], 42)
-        self.assertEqual(captured["payload"]["text"], "Deployed evm-api v1.4.2")
-        self.assertIn("deploy", captured["payload"]["tags"])
-        self.assertIn("production", captured["payload"]["tags"])
-        self.assertIn("time", captured["payload"])
-
-    async def test_create_annotation_with_dashboard_uid(self):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"id": 7}
-        captured = {}
-
-        async def fake_post(url, json, headers, timeout):
-            captured["payload"] = json
-            return mock_resp
-
-        with patch.object(srv._http, "post", side_effect=fake_post):
-            await srv.grafana_create_annotation(
-                text="incident start",
-                dashboard_uid="abc123",
-                panel_id=5,
-            )
-
-        self.assertEqual(captured["payload"]["dashboardUID"], "abc123")
-        self.assertEqual(captured["payload"]["panelId"], 5)
-
-    async def test_grafana_token_added_to_auth_header(self):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = []
-        captured = {}
-
-        async def fake_get(url, params, headers, timeout):
-            captured["headers"] = headers
-            return mock_resp
-
-        with patch.object(srv, "GRAFANA_TOKEN", "my-secret-token"):
-            with patch.object(srv._http, "get", side_effect=fake_get):
-                await srv.grafana_list_annotations()
-
-        self.assertEqual(captured["headers"]["Authorization"], "Bearer my-secret-token")
-
-
 class TestResourceRightsizing(unittest.IsolatedAsyncioTestCase):
     """Tests for k8s_resource_rightsizing and its helper functions."""
 
